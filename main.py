@@ -7,11 +7,11 @@ import io
 import asyncio
 import ebooklib
 from ebooklib import epub
-from weasyprint import HTML
+from weasyprint import HTML, CSS
 import tempfile
 import re
 import os.path
-import logging.handlers
+from bs4 import BeautifulSoup
 
 # הגדרת לוגים
 logging.basicConfig(
@@ -33,34 +33,46 @@ BASE_URL = os.getenv('BASE_URL', 'https://groky.onrender.com')
 # רישום גרסת python-telegram-bot
 logger.info(f"Using python-telegram-bot version {TG_VER}")
 
-# פונקציה: המרת EPUB ל-PDF עם תמיכה בתמונות
+# פונקציה: המרת EPUB ל-PDF עם תמיכה מלאה בתמונות ו-CSS
 def convert_epub_to_pdf(epub_path: str, pdf_path: str) -> bool:
     try:
-        # יצירת ספרייה זמנית לחילוץ תמונות
+        # יצירת ספרייה זמנית לחילוץ משאבים
         with tempfile.TemporaryDirectory() as temp_dir:
             # קריאת קובץ EPUB
             book = epub.read_epub(epub_path)
             html_content = ""
-            
-            # חילוץ תמונות לספרייה זמנית
+            css_content = ""
+
+            # חילוץ תמונות וקבצי CSS לספרייה זמנית
             for item in book.get_items():
-                if item.get_type() == ebooklib.ITEM_IMAGE:
-                    image_path = os.path.join(temp_dir, item.get_name())
-                    os.makedirs(os.path.dirname(image_path), exist_ok=True)
-                    with open(image_path, 'wb') as img_file:
-                        img_file.write(item.get_content())
-            
-            # חילוץ תוכן HTML
+                item_name = item.get_name()
+                item_path = os.path.join(temp_dir, item_name)
+                os.makedirs(os.path.dirname(item_path), exist_ok=True)
+                if item.get_type() in (ebooklib.ITEM_IMAGE, ebooklib.ITEM_COVER):
+                    with open(item_path, 'wb') as f:
+                        f.write(item.get_content())
+                elif item.get_type() == ebooklib.ITEM_STYLE:
+                    css_content += item.get_content().decode('utf-8') + '\n'
+
+            # חילוץ תוכן HTML וטיפול בתמונות
             for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
                 if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                    html_content += item.get_content().decode('utf-8')
-            
+                    # ניקוי HTML עם BeautifulSoup
+                    soup = BeautifulSoup(item.get_content(), 'html.parser')
+                    # הסרת עוגנים כפולים
+                    for tag in soup.find_all(id=True):
+                        if soup.find_all(id=tag['id']) and len(soup.find_all(id=tag['id'])) > 1:
+                            tag['id'] = f"{tag['id']}_{id(tag)}"  # הוספת מזהה ייחודי
+                    html_content += str(soup)
+
             if not html_content:
                 logger.error("לא נמצא תוכן HTML בקובץ EPUB")
                 return False
-            
-            # המרת HTML ל-PDF עם base_url לספריית התמונות הזמנית
-            HTML(string=html_content, base_url=temp_dir).write_pdf(pdf_path)
+
+            # המרת HTML ל-PDF עם base_url ו-CSS
+            weasy_html = HTML(string=html_content, base_url=temp_dir)
+            weasy_css = CSS(string=css_content) if css_content else None
+            weasy_html.write_pdf(pdf_path, stylesheets=[weasy_css] if weasy_css else [])
             return True
     except Exception as e:
         logger.error(f"שגיאה בהמרת EPUB ל-PDF: {e}")
@@ -79,7 +91,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(
         'הנה מה שאני עושה:\n'
         '1. שלח לי קובץ EPUB.\n'
-        '2. אני אמיר אותו ל-PDF.\n'
+        '2. אני אמיר אותו ל-PDF, כולל כל התמונות.\n'
         '3. אני אוסיף את התמונה של אולדטאון ואת הסיומת _OldTown לשם הקובץ.\n'
         '4. תקבל את קובץ ה-PDF בחזרה.\n'
         'שלח רק קבצי EPUB, אחרת תקבל שגיאה!\n'
