@@ -1,16 +1,50 @@
-FROM linuxserver/calibre:5.38.0
+# שימוש בתמונת בסיס קלה עם Python 3.11
+FROM python:3.11-slim
 
-WORKDIR /epub_to_pdf
+# הגדרת משתני סביבה
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TELEGRAM_TOKEN="" \
+    BASE_URL="https://groky.onrender.com" \
+    PORT=8443
 
-RUN apt-get -y update && \
-    apt-get -y install python3 python3-pip && \
-    python3 -m pip install --upgrade pip
+# יצירת משתמש לא-פריווילגי
+RUN useradd -m -u 1000 appuser
 
+# הגדרת ספריית עבודה
+WORKDIR /app
+
+# התקנת תלויות מערכת עבור Pillow ו-WeasyPrint
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libc-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libcairo2 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# העתקת קובץ התלויות
 COPY requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
+# התקנת תלויות Python
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# העתקת שאר הקבצים
 COPY . .
 
-RUN mkdir -p files
+# וידוא שקובץ thumbnail.jpg קיים
+RUN test -f thumbnail.jpg || { echo "thumbnail.jpg not found!"; exit 1; }
 
-CMD ["python3", "main.py"]
+# שינוי הרשאות למשתמש appuser
+RUN chown -R appuser:appuser /app
+
+# מעבר למשתמש לא-פריווילגי
+USER appuser
+
+# פקודה להרצת הבוט
+CMD ["python", "bot.py"]
