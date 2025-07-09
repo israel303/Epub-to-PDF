@@ -7,7 +7,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     TELEGRAM_TOKEN="" \
     BASE_URL="https://groky.onrender.com" \
-    PORT=8443
+    PORT=8443 \
+    QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
 
 # יצירת משתמש לא-פריווילגי
 RUN useradd -m -u 1000 appuser
@@ -15,15 +16,13 @@ RUN useradd -m -u 1000 appuser
 # הגדרת ספריית עבודה
 WORKDIR /app
 
-# התקנת תלויות מערכת עבור Pillow ו-WeasyPrint
+# התקנת תלויות מערכת עבור Pillow ו-Calibre
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libc-dev \
     libjpeg-dev \
     zlib1g-dev \
-    libpango-1.0-0 \
-    libpangoft2-1.0-0 \
-    libcairo2 \
+    calibre \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
