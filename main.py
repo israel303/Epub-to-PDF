@@ -1,5 +1,6 @@
 import logging
 import os
+import warnings
 from telegram import Update, __version__ as TG_VER
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from PIL import Image
@@ -24,6 +25,9 @@ logger = logging.getLogger(__name__)
 weasyprint_logger = logging.getLogger('weasyprint')
 weasyprint_logger.setLevel(logging.ERROR)  # מציג רק שגיאות, לא אזהרות
 
+# דיכוי FutureWarning של ebooklib
+warnings.filterwarnings('ignore', category=FutureWarning, module='ebooklib.epub')
+
 # תמונת ה-thumbnail הקבועה
 THUMBNAIL_PATH = 'thumbnail.jpg'
 
@@ -41,7 +45,7 @@ def convert_epub_to_pdf(epub_path: str, pdf_path: str) -> bool:
             # קריאת קובץ EPUB
             book = epub.read_epub(epub_path)
             html_content = ""
-            css_content = ""
+            css_files = []
 
             # חילוץ תמונות וקבצי CSS לספרייה זמנית
             for item in book.get_items():
@@ -52,9 +56,11 @@ def convert_epub_to_pdf(epub_path: str, pdf_path: str) -> bool:
                     with open(item_path, 'wb') as f:
                         f.write(item.get_content())
                 elif item.get_type() == ebooklib.ITEM_STYLE:
-                    css_content += item.get_content().decode('utf-8') + '\n'
+                    with open(item_path, 'wb') as f:
+                        f.write(item.get_content())
+                    css_files.append(CSS(filename=item_path))
 
-            # חילוץ תוכן HTML וטיפול בתמונות
+            # חילוץ תוכן HTML וטיפול בקישורים יחסיים
             for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
                 if item.get_type() == ebooklib.ITEM_DOCUMENT:
                     # ניקוי HTML עם BeautifulSoup
@@ -62,7 +68,13 @@ def convert_epub_to_pdf(epub_path: str, pdf_path: str) -> bool:
                     # הסרת עוגנים כפולים
                     for tag in soup.find_all(id=True):
                         if soup.find_all(id=tag['id']) and len(soup.find_all(id=tag['id'])) > 1:
-                            tag['id'] = f"{tag['id']}_{id(tag)}"  # הוספת מזהה ייחודי
+                            tag['id'] = f"{tag['id']}_{id(tag)}"
+                    # תיקון קישורי CSS יחסיים
+                    for link in soup.find_all('link', href=True):
+                        if link['href'].endswith('.css'):
+                            css_path = os.path.join(temp_dir, link['href'])
+                            if os.path.exists(css_path):
+                                link['href'] = css_path
                     html_content += str(soup)
 
             if not html_content:
@@ -71,8 +83,7 @@ def convert_epub_to_pdf(epub_path: str, pdf_path: str) -> bool:
 
             # המרת HTML ל-PDF עם base_url ו-CSS
             weasy_html = HTML(string=html_content, base_url=temp_dir)
-            weasy_css = CSS(string=css_content) if css_content else None
-            weasy_html.write_pdf(pdf_path, stylesheets=[weasy_css] if weasy_css else [])
+            weasy_html.write_pdf(pdf_path, stylesheets=css_files)
             return True
     except Exception as e:
         logger.error(f"שגיאה בהמרת EPUB ל-PDF: {e}")
