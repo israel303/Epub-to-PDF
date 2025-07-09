@@ -47,4 +47,4 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # פקודה להרצת הבוט
-CMD ["python", "bot.py"]
+CMD ["python", "main.py"]
