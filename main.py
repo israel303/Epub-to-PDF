@@ -1,18 +1,13 @@
 import logging
 import os
-import warnings
+import subprocess
+import re
 from telegram import Update, __version__ as TG_VER
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from PIL import Image
 import io
 import asyncio
-import ebooklib
-from ebooklib import epub
-from weasyprint import HTML, CSS
 import tempfile
-import re
-import os.path
-from bs4 import BeautifulSoup
 
 # הגדרת לוגים
 logging.basicConfig(
@@ -20,13 +15,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# דיכוי אזהרות של weasyprint
-weasyprint_logger = logging.getLogger('weasyprint')
-weasyprint_logger.setLevel(logging.ERROR)  # מציג רק שגיאות, לא אזהרות
-
-# דיכוי FutureWarning של ebooklib
-warnings.filterwarnings('ignore', category=FutureWarning, module='ebooklib.epub')
 
 # תמונת ה-thumbnail הקבועה
 THUMBNAIL_PATH = 'thumbnail.jpg'
@@ -37,56 +25,24 @@ BASE_URL = os.getenv('BASE_URL', 'https://groky.onrender.com')
 # רישום גרסת python-telegram-bot
 logger.info(f"Using python-telegram-bot version {TG_VER}")
 
-# פונקציה: המרת EPUB ל-PDF עם תמיכה מלאה בתמונות ו-CSS
+# פונקציה: המרת EPUB ל-PDF עם ebook-convert
 def convert_epub_to_pdf(epub_path: str, pdf_path: str) -> bool:
     try:
-        # יצירת ספרייה זמנית לחילוץ משאבים
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # קריאת קובץ EPUB
-            book = epub.read_epub(epub_path)
-            html_content = ""
-            css_files = []
-
-            # חילוץ תמונות וקבצי CSS לספרייה זמנית
-            for item in book.get_items():
-                item_name = item.get_name()
-                item_path = os.path.join(temp_dir, item_name)
-                os.makedirs(os.path.dirname(item_path), exist_ok=True)
-                if item.get_type() in (ebooklib.ITEM_IMAGE, ebooklib.ITEM_COVER):
-                    with open(item_path, 'wb') as f:
-                        f.write(item.get_content())
-                elif item.get_type() == ebooklib.ITEM_STYLE:
-                    with open(item_path, 'wb') as f:
-                        f.write(item.get_content())
-                    css_files.append(CSS(filename=item_path))
-
-            # חילוץ תוכן HTML וטיפול בקישורים יחסיים
-            for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-                if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                    # ניקוי HTML עם BeautifulSoup
-                    soup = BeautifulSoup(item.get_content(), 'html.parser')
-                    # הסרת עוגנים כפולים
-                    for tag in soup.find_all(id=True):
-                        if soup.find_all(id=tag['id']) and len(soup.find_all(id=tag['id'])) > 1:
-                            tag['id'] = f"{tag['id']}_{id(tag)}"
-                    # תיקון קישורי CSS יחסיים
-                    for link in soup.find_all('link', href=True):
-                        if link['href'].endswith('.css'):
-                            css_path = os.path.join(temp_dir, link['href'])
-                            if os.path.exists(css_path):
-                                link['href'] = css_path
-                    html_content += str(soup)
-
-            if not html_content:
-                logger.error("לא נמצא תוכן HTML בקובץ EPUB")
-                return False
-
-            # המרת HTML ל-PDF עם base_url ו-CSS
-            weasy_html = HTML(string=html_content, base_url=temp_dir)
-            weasy_html.write_pdf(pdf_path, stylesheets=css_files)
-            return True
+        result = subprocess.run(
+            ["ebook-convert", epub_path, pdf_path],
+            env={"QTWEBENGINE_CHROMIUM_FLAGS": "--no-sandbox"},
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        logger.info(f"המרה הצליחה: {epub_path} -> {pdf_path}")
+        logger.debug(f"פלט ebook-convert: {result.stdout}")
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"שגיאה בהמרת EPUB ל-PDF: {e.stderr}")
+        return False
     except Exception as e:
-        logger.error(f"שגיאה בהמרת EPUB ל-PDF: {e}")
+        logger.error(f"שגיאה כללית בהמרה: {e}")
         return False
 
 # פקודת /start
@@ -102,7 +58,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(
         'הנה מה שאני עושה:\n'
         '1. שלח לי קובץ EPUB.\n'
-        '2. אני אמיר אותו ל-PDF, כולל כל התמונות.\n'
+        '2. אני אמיר אותו ל-PDF, כולל כל התמונות והעיצוב.\n'
         '3. אני אוסיף את התמונה של אולדטאון ואת הסיומת _OldTown לשם הקובץ.\n'
         '4. תקבל את קובץ ה-PDF בחזרה.\n'
         'שלח רק קבצי EPUB, אחרת תקבל שגיאה!\n'
