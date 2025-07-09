@@ -10,6 +10,8 @@ from ebooklib import epub
 from weasyprint import HTML
 import tempfile
 import re
+import os.path
+import logging.handlers
 
 # הגדרת לוגים
 logging.basicConfig(
@@ -17,6 +19,10 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# דיכוי אזהרות של weasyprint
+weasyprint_logger = logging.getLogger('weasyprint')
+weasyprint_logger.setLevel(logging.ERROR)  # מציג רק שגיאות, לא אזהרות
 
 # תמונת ה-thumbnail הקבועה
 THUMBNAIL_PATH = 'thumbnail.jpg'
@@ -27,25 +33,35 @@ BASE_URL = os.getenv('BASE_URL', 'https://groky.onrender.com')
 # רישום גרסת python-telegram-bot
 logger.info(f"Using python-telegram-bot version {TG_VER}")
 
-# פונקציה: המרת EPUB ל-PDF
+# פונקציה: המרת EPUB ל-PDF עם תמיכה בתמונות
 def convert_epub_to_pdf(epub_path: str, pdf_path: str) -> bool:
     try:
-        # קריאת קובץ EPUB
-        book = epub.read_epub(epub_path)
-        html_content = ""
-        
-        # חילוץ תוכן HTML מכל פריט מסוג HTML
-        for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-            if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                html_content += item.get_content().decode('utf-8')
-        
-        if not html_content:
-            logger.error("לא נמצא תוכן HTML בקובץ EPUB")
-            return False
-        
-        # המרת HTML ל-PDF
-        HTML(string=html_content).write_pdf(pdf_path)
-        return True
+        # יצירת ספרייה זמנית לחילוץ תמונות
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # קריאת קובץ EPUB
+            book = epub.read_epub(epub_path)
+            html_content = ""
+            
+            # חילוץ תמונות לספרייה זמנית
+            for item in book.get_items():
+                if item.get_type() == ebooklib.ITEM_IMAGE:
+                    image_path = os.path.join(temp_dir, item.get_name())
+                    os.makedirs(os.path.dirname(image_path), exist_ok=True)
+                    with open(image_path, 'wb') as img_file:
+                        img_file.write(item.get_content())
+            
+            # חילוץ תוכן HTML
+            for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+                if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                    html_content += item.get_content().decode('utf-8')
+            
+            if not html_content:
+                logger.error("לא נמצא תוכן HTML בקובץ EPUB")
+                return False
+            
+            # המרת HTML ל-PDF עם base_url לספריית התמונות הזמנית
+            HTML(string=html_content, base_url=temp_dir).write_pdf(pdf_path)
+            return True
     except Exception as e:
         logger.error(f"שגיאה בהמרת EPUB ל-PDF: {e}")
         return False
