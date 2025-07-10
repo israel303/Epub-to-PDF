@@ -1,0 +1,3 @@
+BASE_URL=https://<yourproject>-htk9.onrender.com
+PORT=8443
+TELEGRAM_TOKEN=<yourtoken>
